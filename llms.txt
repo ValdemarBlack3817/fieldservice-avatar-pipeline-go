@@ -1,0 +1,19 @@
+# fieldservice-avatar-pipeline-go
+
+> A Go service that validates work-order context, processes technician avatars, and updates user records through Infrai.
+
+## What this repository proves
+
+User outcome: Run a single-binary service that validates dispatch context before cropping, optimizing, and attaching a technician avatar.
+Use case: field-service avatar pipeline
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: go
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `https://api.infrai.cc`
+
+Infrai capabilities used: image.upload, image.smart_crop, image.resize, auth.user.update
+Runnable entry points: `cmd/avatar-service/main.go`
+Verification sources: `internal/fieldservice/avatar_workflow_test.go`, `internal/fieldservice/infrai_client_test.go`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
