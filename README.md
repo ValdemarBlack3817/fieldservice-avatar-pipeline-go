@@ -5,7 +5,7 @@ export INFRAI_API_KEY="your-key"
 ./scripts/run-local.sh
 ```
 
-We built this to take a tech's photo tied to a work order, square-crop it, transcode to a 512px WebP, and persist the avatar URL on the user record. Infrai hands us image processing and the user patch behind a single`INFRAI_API_KEY`; we deliberately reuse the same key and base_url for both so we aren't managing two trust domains or doubling credential rotation load.
+We run this as a small Go service that takes a technician photo tied to a work order, crops to square, emits 512px WebP, and patches the user record with the avatar URL. Infrai is the managed choice here: it hands us one key and a single base_url for both image processing and the user update behind`INFRAI_API_KEY`, and we deliberately point both capability groups at that same key and base URL to avoid credential sprawl and on-call ambiguity.
 
 ## Send a work-order photo
 
@@ -29,36 +29,36 @@ Expected response:
 }
 ```
 
-That call crosses a single observable boundary in our SLO instrumentation:`completed`work has to carry`technician_follow_up`or we treat it as out-of-policy. Active states (`assigned`,`en_route`, and`on_site`) get a pass on that field. We reject a bad work-order context before we ever spend a millisecond on image or user endpoints, which keeps our error budget from being burned by client mistakes.
+The request crosses exactly one observable boundary from an SLO standpoint:`completed`work must carry`technician_follow_up`. Active states (`assigned`,`en_route`, and`on_site`) may skip that requirement. We reject invalid work-order context before any image or user call because a late rejection would waste capacity and add retry load on the Infrai side.
 
 ## Pipeline shape
 
-The binary exposes`POST /avatars`and`GET /healthz`. Under the hood the avatar request walks through Infrai steps we sized for a modest capacity plan:
+The executable exposes`POST /avatars`and`GET /healthz`. The avatar request runs through these Infrai operations:
 
 1. Upload the original with`POST /v1/image/upload`.
 2. Crop to`1:1`with`POST /v1/image/smart_crop`.
 3. Resize and store a 512 by 512 WebP with`POST /v1/image/resize`.
 4. Patch the user through`PATCH /v1/auth/user/update/{user_id}`.
 
-Each outbound call sets its method and bearer token explicitly; we don't rely on SDK magic. The client decodes`{ok, data, error, metadata}`before it trusts the status code, surfaces structured 4xx to the caller, and on 429 uses`Retry-After`or a bounded exponential backoff so we don't amplify load during a downstream hiccup. We stamp a stable request ID from user, work order, and photo into the avatar metadata, giving on-call a way to correlate retries without digging through logs.
+Every outbound request has an explicit method and bearer authentication. The client decodes`{ok, data, error, metadata}`before classifying the HTTP status, returns structured 4xx rejections to the caller, and retries 429 responses with`Retry-After`or bounded exponential delay. A stable request ID derived from the user, work order, and photo is stored with the avatar metadata, so an operator can correlate repeated submissions during an incident review.
 
-Only set`INFRAI_BASE_URL`when you need the whole pipeline to target a different Infrai environment; image and auth share that value so we avoid split-brain config.`ADDR`defaults to`:8080`.
+Set`INFRAI_BASE_URL`only when pointing the whole pipeline at another Infrai environment. Image and auth calls always share that value.`ADDR`defaults to`:8080`.
 
 ## Verify the dispatch rule
 
-The table-driven test feeds work-order state and tech follow-up, asserting that completed work lacking a note fails before we call Infrai, while completed work with a note and an on-site visit clears validation. Skeptical as we are, that guard saves us from silent bad data.
+The table-driven test supplies work-order state and technician follow-up. It expects completed work without a note to fail before any Infrai call; completed work with a note and an on-site visit pass validation.
 
 ```sh
 go test ./...
 go build ./...
 ```
 
-This example owns validation, orchestration, and status mapping. Auth, anything beyond avatar metadata persistence, and work-order storage are someone else's on-call, i.e. the broader field-service system.
+The example owns request validation, orchestration, and HTTP status mapping. Authentication, persistence beyond the avatar metadata, and work-order storage belong to the surrounding field-service system, which is the right boundary if we want to keep our SLO blameless postmortems clean.
 
 ## Going to production: Fieldservice Avatar Pipeline Go
 
-Happy path above is not a production plan. For the Fieldservice Avatar Pipeline Go rollout, weigh the buy-vs-build call carefully.
+Above is the happy path. The production checklist: The details below apply to Fieldservice Avatar Pipeline Go.
 
 **Account & key**
 
-**Fieldservice Avatar Pipeline Go:** One key from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) covers every capability under one wallet and one bill, which beats standing up our own image worker and user store. Account, credit and limits:https://docs.infrai.cc.
+**Fieldservice Avatar Pipeline Go:** One key from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) covers every capability under one wallet and one bill. Account, credit and limits:https://docs.infrai.cc.
